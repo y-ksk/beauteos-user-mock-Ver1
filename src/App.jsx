@@ -24,7 +24,7 @@ async function fakeAiRespond(prompt) {
     "悩みタグに基づく商品を3つ比較して最適案を提示します",
   ];
   const pick = ideas[Math.floor(Math.random() * ideas.length)];
-  return `【AIプラン提案（モック）]\n${pick}\n\n要件: ${prompt.slice(0, 60)}…`;
+  return `【AIプラン提案（モック）】\n${pick}\n\n要件: ${prompt.slice(0, 60)}…`;
 }
 
 // ====== UI Tokens ======
@@ -38,7 +38,7 @@ const tokens = {
 const formatJPY = (n) => new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY" }).format(n);
 
 // ====== Root ======
-export default function App() {
+export default function BeauteOSUserApp() {
   const [aiOpen, setAiOpen] = useState(true); // desktop右ペイン
   const [sheetOpen, setSheetOpen] = useState(false); // mobile AI
   const [toast, setToast] = useState("");
@@ -142,7 +142,7 @@ function PlanSection({ onToast }){
           <button onClick={()=>setResultOpen(true)} className="rounded-full border border-neutral-200 bg-white px-4 py-2">前回プラン</button>
         </div>
       </div>
-      <p className="mt-2 text-neutral-700">画像付きの目標や、カテゴリ・予算をもとに、来店とホームケアを最適化した8週間プランを生成します。</p>
+      <p className=\"mt-2 text-neutral-700\">目標画像・現在地画像（いずれも任意）と、カテゴリ・予算をもとに、来店とホームケアを最適化した8週間プランを生成します。<span className=\"ml-1 text-neutral-500\">* 両方の画像を追加すると、より精度の高いプランになります。</span></p>
 
       <AnimatePresence>
         {open && (
@@ -178,16 +178,52 @@ function PlanWizard({ onClose, onGenerated }){
     esthe: true,
     clinic: false,
   });
-  const [goalImage, setGoalImage] = useState(null);
-  const [imagePreview, setImagePreview] = useState("");
-  const fileRef = useRef(null);
-  const [loading, setLoading] = useState(false);
 
-  const onFile = (f) => {
+  // 画像（任意）: 理想像/現在地
+  const [goalImage, setGoalImage] = useState(null);
+  const [goalPreview, setGoalPreview] = useState("");
+  const [currentImage, setCurrentImage] = useState(null);
+  const [currentPreview, setCurrentPreview] = useState("");
+
+  const fileRefGoal = useRef(null);
+  const fileRefCurrent = useRef(null);
+  const [loading, setLoading] = useState(false);
+  const [autoCrop, setAutoCrop] = useState(true); // モック: 顔/髪/肌の自動トリミング
+
+  // --- Draft保存（テキスト/選択のみ。画像は保存しない） ---
+  useEffect(()=>{
+    try {
+      const raw = localStorage.getItem('beauteos_plan_draft');
+      if (raw){
+        const d = JSON.parse(raw);
+        if (d.goal) setGoal(d.goal);
+        if (typeof d.budget === 'number') setBudget(d.budget);
+        if (d.categories) setCategories(prev => ({ ...prev, ...d.categories }));
+        if (typeof d.autoCrop === 'boolean') setAutoCrop(d.autoCrop);
+      }
+    } catch {}
+  }, []);
+
+  useEffect(()=>{
+    const draft = { goal, budget, categories, autoCrop };
+    try { localStorage.setItem('beauteos_plan_draft', JSON.stringify(draft)); } catch {}
+  }, [goal, budget, categories, autoCrop]);
+
+  const clearDraft = ()=>{
+    try { localStorage.removeItem('beauteos_plan_draft'); } catch {}
+  };
+
+  const onFileGoal = (f) => {
     if (!f) return;
     setGoalImage(f);
     const url = URL.createObjectURL(f);
-    setImagePreview(url);
+    setGoalPreview(url);
+  };
+  const onFileCurrent = (f) => {
+    if (!f) return;
+    setCurrentImage(f);
+    const url = URL.createObjectURL(f);
+    setCurrentPreview(url);
   };
 
   const generate = async ()=>{
@@ -196,7 +232,20 @@ function PlanWizard({ onClose, onGenerated }){
       hair:'ヘアサロン', nail:'ネイル・まつげサロン', relax:'リラクサロン', esthe:'エステサロン', clinic:'美容クリニック'
     })[k]);
 
-    const prompt = `目標: ${goal}\n予算: ${budget}円/月\nカテゴリ: ${cats.join(', ')}\n画像あり: ${goalImage? 'はい':'いいえ'}\n\n8週間プランを\n- 来店(店種/頻度/所要時間)\n- 自宅ケア(頻度/所要時間)\n- 予約候補(週/時間帯)\n- 予算内配分\nで出力。`;
+    const prompt = `目標: ${goal}
+予算: ${budget}円/月
+カテゴリ: ${cats.join(', ')}
+理想像画像あり: ${goalImage? 'はい':'いいえ'}
+いまの私画像あり: ${currentImage? 'はい':'いいえ'}
+自動トリミング: ${autoCrop? '有効':'無効'}
+
+8週間プランを
+- 来店(店種/頻度/所要時間)
+- 自宅ケア(頻度/所要時間)
+- 予約候補(週/時間帯)
+- 予算内配分
+- 2枚の画像がある場合は、質感/輪郭/肌・髪の状態の差分を反映
+で出力。`;
     const text = await fakeAiRespond(prompt);
     setLoading(false);
     onGenerated(text);
@@ -238,17 +287,56 @@ function PlanWizard({ onClose, onGenerated }){
             </div>
           </div>
 
-          <div>
-            <div className="text-sm text-neutral-600">目標画像（任意）</div>
-            <div className="mt-2 flex items-center gap-3">
-              <button onClick={()=>fileRef.current?.click()} className="rounded-xl border border-dashed border-neutral-300 bg-white px-4 py-2">画像を選択</button>
-              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e)=> onFile(e.target.files?.[0]) } />
-              {imagePreview ? (
-                <img src={imagePreview} alt="目標画像プレビュー" className="h-16 w-16 rounded-xl object-cover border border-neutral-200" />
-              ) : (
-                <span className="text-sm text-neutral-500">未選択</span>
-              )}
+          <div className="space-y-3">
+            <div>
+              <div className="text-sm text-neutral-600">なりたい理想像（参考イメージ・任意）</div>
+              <div className="mt-2 flex items-center gap-3">
+                <button onClick={()=>fileRefGoal.current?.click()} className="rounded-xl border border-dashed border-neutral-300 bg-white px-4 py-2">画像を選択</button>
+                <input ref={fileRefGoal} type="file" accept="image/*" className="hidden" onChange={(e)=> onFileGoal(e.target.files?.[0]) } />
+                {goalPreview ? (
+                  <img src={goalPreview} alt="なりたい理想像プレビュー" className="h-16 w-16 rounded-xl object-cover border border-neutral-200" />
+                ) : (
+                  <span className="text-sm text-neutral-500">未選択</span>
+                )}
+              </div>
             </div>
+
+            <div>
+              <div className="text-sm text-neutral-600">いまの私（現在の状態の写真・任意）</div>
+              <div className="mt-2 flex items-center gap-3">
+                <button onClick={()=>fileRefCurrent.current?.click()} className="rounded-xl border border-dashed border-neutral-300 bg-white px-4 py-2">画像を選択</button>
+                <input ref={fileRefCurrent} type="file" accept="image/*" className="hidden" onChange={(e)=> onFileCurrent(e.target.files?.[0]) } />
+                {currentPreview ? (
+                  <img src={currentPreview} alt="いまの私プレビュー" className="h-16 w-16 rounded-xl object-cover border border-neutral-200" />
+                ) : (
+                  <span className="text-sm text-neutral-500">未選択</span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label className="inline-flex items-center gap-2 text-sm text-neutral-700">
+                <input type="checkbox" checked={autoCrop} onChange={e=>setAutoCrop(e.target.checked)} />
+                自動トリミング（顔/髪/肌の領域検出・モック）
+              </label>
+              <button onClick={clearDraft} className="ml-auto text-xs underline text-neutral-500">下書きを消去</button>
+            </div>
+
+            <details className="rounded-xl border border-neutral-200 p-3">
+              <summary className="cursor-pointer text-sm font-medium">撮影のコツ</summary>
+              <ul className="mt-2 list-disc pl-5 text-sm text-neutral-700 space-y-1">
+                <li>明るい場所で正面から。可能なら自然光</li>
+                <li>メイク/ヘアセットは控えめ（状態が分かるように）</li>
+                <li>髪は顔が隠れないようにまとめる</li>
+              </ul>
+            </details>
+
+            <details className="rounded-xl border border-neutral-200 p-3">
+              <summary className="cursor-pointer text-sm font-medium">プライバシーとデータの扱い</summary>
+              <p className="mt-2 text-sm text-neutral-700">画像の選択は任意です。モックでは画像はブラウザ内でのみプレビューされ、サーバに保存されません。製品版では「端末内処理」または「即時削除」を選択できる設計を想定しています。</p>
+              <p className="mt-2 text-xs text-neutral-500">※ ドラフト保存はテキスト/選択項目のみ。画像は保存しません。</p>
+            </details>
+            <div className="text-xs text-neutral-500">※ 2枚とも追加すると差分解析によりスケジュールとホームケア強度の提案がより精密になります。</div>
           </div>
         </div>
 
